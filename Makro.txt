@@ -1,0 +1,246 @@
+Sub GetCrossoutDBItems()
+    
+    ' DESCRIPTION:
+    ' activiere die folgenden Verweise unter Extras -> Verweise damit dieses Makro korrekt ausgeführt wird
+    ' "Microsoft Scripting Runtime"
+    ' "Microsoft WinHTTP Services, version 5.1"
+    
+    Const WorksheetName = "CrossoutDBItems"
+
+    Dim wsIdx As Integer
+    Dim ws As Worksheet
+    Dim activeSheetIdx As Long
+    Dim response As String
+    Dim arrResult() As Variant
+    
+    Set acSheet = activeSheet
+      
+    activeSheetIdx = getWorksheetIndex(acSheet.name)
+    wsIdx = getWorksheetIndex(WorksheetName)
+    
+    ' create worksheet if not exists
+    If wsIdx = -1 Then
+        CreateSheet (WorksheetName)
+    End If
+    
+    Set ws = Worksheets(getWorksheetIndex(WorksheetName))
+    
+    response = DownloadJson("https://crossoutdb.com/api/v1/items?query=")
+    If response <> "" Then
+        response = clearjson(response)
+        ' process
+        arrResult = ConvertJsonToArray(response)
+        ' output
+        Output ws, arrResult
+        Sheets(activeSheetIdx).Activate
+    End If
+    
+End Sub
+
+Function getWorksheetIndex(aName As String)
+
+    Dim Result As Integer
+    Dim i As Integer
+    Dim ws As Worksheet
+   
+    Result = -1
+    
+    For i = 1 To Worksheets.Count
+        Set ws = Worksheets(i)
+        If ws.name = aName Then
+            Result = i
+            Exit For
+        End If
+    Next i
+    
+    getWorksheetIndex = Result
+
+End Function
+
+Function clearjson(myString)
+    Dim jsonStr As String
+    jsonStr = Replace(myString, Chr(10), "")
+    jsonStr = Replace(jsonStr, "  ", "")
+    
+    Dim arr() As String
+    Dim innerArr() As String
+    Dim i As Long
+    
+    arr = Split(jsonStr, "[{")
+    jsonStr = "[{"
+    For Each element In arr
+        If element <> "" Then
+            innerArr = Split(element, "}]")
+            If UBound(innerArr) = 1 Then
+                jsonStr = jsonStr + innerArr(1)
+            Else
+                jsonStr = jsonStr + innerArr(0)
+            End If
+        End If
+    Next element
+    clearjson = jsonStr
+End Function
+
+Private Sub CreateSheet(name As String)
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets.Add(After:= _
+             ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+    ws.name = name
+End Sub
+
+Function DownloadJson(strUrl As String) As String
+
+    On Error GoTo ErrorHandler
+    With CreateObject("MSXML2.XMLHTTP")
+        .Open "GET", strUrl
+        .Send
+        
+        If .Status <> 200 Then
+            Exit Function
+        End If
+        DownloadJson = .ResponseText
+    End With
+    Exit Function
+ErrorHandler:
+    DownloadJson = ""
+
+End Function
+                
+Function ConvertJsonToArray(strJsonString As String) As Variant
+
+    Dim strCnt As String
+    Dim strMarkerQuot As String
+    Dim arrUnicode() As String
+    Dim arrQuots() As String
+    Dim arrRows() As String
+    Dim arrProps() As String
+    Dim arrTokens() As String
+    Dim arrHeader() As String
+    Dim arrColumns() As Variant
+    Dim arrColumn() As Variant
+    Dim arrTable() As Variant
+    Dim j As Long
+    Dim i As Long
+    Dim lngMaxRowIdx As Long
+    Dim lngMaxColIdx As Long
+    Dim lngPrevIdx As Long
+    Dim lngFoundIdx As Long
+    Dim arrProperty() As String
+    Dim strPropName As String
+    Dim strPropValue As String
+
+    strCnt = Split(strJsonString, "[{")(1)
+    strCnt = Split(strCnt, "}]")(0)
+
+    'Mid(CreateObject("Scriptlet.TypeLib").Guid, 2, 36)
+    strMarkerQuot = "|9|9"
+    strCnt = Replace(strCnt, "\\", "\")
+    strCnt = Replace(strCnt, "\""", strMarkerQuot)
+    strCnt = Replace(strCnt, "\/", "/")
+    strCnt = Replace(strCnt, "\b", Chr(8))
+    strCnt = Replace(strCnt, "\f", Chr(12))
+    strCnt = Replace(strCnt, "\n", vbLf)
+    strCnt = Replace(strCnt, "\r", vbCr)
+    strCnt = Replace(strCnt, "\t", vbTab)
+
+    arrUnicode = Split(strCnt, "\u")
+    For i = 1 To UBound(arrUnicode)
+        arrUnicode(i) = ChrW(CLng("&H" & Left(arrUnicode(i), 4))) & Mid(arrUnicode(i), 5)
+    Next
+    strCnt = Join(arrUnicode, "")
+
+    arrQuots = Split(strCnt, """")
+    ReDim arrTokens(UBound(arrQuots) \ 2)
+    For i = 1 To UBound(arrQuots) Step 2
+        arrTokens(i \ 2) = Replace(arrQuots(i), strMarkerQuot, """")
+        arrQuots(i) = "%" & i \ 2
+    Next
+
+    strCnt = Join(arrQuots, "")
+    strCnt = Replace(strCnt, " ", "")
+
+    arrRows = Split(strCnt, "},{")
+    lngMaxRowIdx = UBound(arrRows)
+    For j = 0 To lngMaxRowIdx
+        lngPrevIdx = -1
+        arrProps = Split(arrRows(j), ",")
+        For i = 0 To UBound(arrProps)
+            arrProperty = Split(arrProps(i), ":")
+            strPropName = arrProperty(0)
+            If Left(strPropName, 1) = "%" Then strPropName = arrTokens(Mid(strPropName, 2))
+            lngFoundIdx = GetArrayItemIndex(arrHeader, strPropName)
+            If lngFoundIdx = -1 Then
+                ReDim arrColumn(lngMaxRowIdx)
+                If lngPrevIdx = -1 Then
+                    ArrayAddItem arrHeader, strPropName
+                    lngPrevIdx = UBound(arrHeader)
+                    ArrayAddItem arrColumns, arrColumn
+                Else
+                    lngPrevIdx = lngPrevIdx + 1
+                    ArrayInsertItem arrHeader, lngPrevIdx, strPropName
+                    ArrayInsertItem arrColumns, lngPrevIdx, arrColumn
+                End If
+            Else
+                lngPrevIdx = lngFoundIdx
+            End If
+            strPropValue = arrProperty(1)
+            If Left(strPropValue, 1) = "%" Then strPropValue = arrTokens(Mid(strPropValue, 2))
+            arrColumns(lngPrevIdx)(j) = strPropValue
+        Next
+    Next
+    lngMaxColIdx = UBound(arrHeader)
+    ReDim arrTable(lngMaxRowIdx + 1, lngMaxColIdx)
+    For i = 0 To lngMaxColIdx
+        arrTable(0, i) = arrHeader(i)
+    Next
+    For j = 0 To lngMaxRowIdx
+        For i = 0 To lngMaxColIdx
+            arrTable(j + 1, i) = arrColumns(i)(j)
+        Next
+    Next
+
+    ConvertJsonToArray = arrTable
+
+End Function
+
+Sub Output(objSheet As Worksheet, arrCells() As Variant)
+
+    With objSheet
+        .Select
+        .Range(.Cells(1, 1), Cells(UBound(arrCells, 1) + 1, UBound(arrCells, 2) + 1)).Value = arrCells
+        .Columns.AutoFit
+    End With
+    With ActiveWindow
+        .SplitColumn = 0
+        .SplitRow = 1
+        .FreezePanes = True
+    End With
+
+End Sub
+
+Function GetArrayItemIndex(arrElements, varTest)
+    For GetArrayItemIndex = 0 To SafeUBound(arrElements)
+        If arrElements(GetArrayItemIndex) = varTest Then Exit Function
+    Next
+    GetArrayItemIndex = -1
+End Function
+
+Sub ArrayAddItem(arrElements, varElement)
+    ReDim Preserve arrElements(SafeUBound(arrElements) + 1)
+    arrElements(UBound(arrElements)) = varElement
+End Sub
+
+Sub ArrayInsertItem(arrElements, lngIndex, varElement)
+    Dim i As Long
+    ReDim Preserve arrElements(SafeUBound(arrElements) + 1)
+    For i = UBound(arrElements) To lngIndex + 1 Step -1
+        arrElements(i) = arrElements(i - 1)
+    Next
+    arrElements(i) = varElement
+End Sub
+
+Function SafeUBound(arrTest)
+    On Error Resume Next
+    SafeUBound = -1
+    SafeUBound = UBound(arrTest)
+End Function
