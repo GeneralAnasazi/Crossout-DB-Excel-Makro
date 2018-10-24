@@ -66,19 +66,15 @@ Function clearjson(myString)
     Dim innerArr() As String
     Dim i As Long
     
-    arr = Split(jsonStr, "[{")
-    jsonStr = "[{"
+    arr = Split(jsonStr, "}]")
+    jsonStr = "[{" + Split(jsonStr, "[{")(1)
     For Each element In arr
         If element <> "" Then
-            innerArr = Split(element, "}]")
-            If UBound(innerArr) = 1 Then
-                jsonStr = jsonStr + innerArr(1)
-            Else
-                jsonStr = jsonStr + innerArr(0)
-            End If
+            innerArr = Split(element, "[{")
+            jsonStr = jsonStr + innerArr(0)
         End If
     Next element
-    clearjson = jsonStr
+    clearjson = jsonStr + "}]"
 End Function
 
 Private Sub CreateSheet(name As String)
